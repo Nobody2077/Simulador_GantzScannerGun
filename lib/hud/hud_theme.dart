@@ -19,6 +19,7 @@ class HudTheme {
     required this.alert,
     required this.highlight,
     required this.panelFill,
+    required this.feedTint,
     required this.panel,
     required this.panelBorder,
     required this.hairline,
@@ -53,6 +54,16 @@ class HudTheme {
   /// Relleno translúcido de las fichas de datos.
   final Color panelFill;
 
+  /// Tinte que se aplica sobre el feed de cámara, por debajo del HUD.
+  ///
+  /// Es lo que convierte "imagen de cámara" en "lo que ve el visor": el feed
+  /// crudo se lee como una foto y el tinte lo integra al instrumento. Se tiñe
+  /// solo la imagen, nunca el HUD, que tiene que seguir leyéndose por encima.
+  ///
+  /// Deliberadamente suave: un azul fuerte se ve espectacular en una captura y
+  /// cansa a los diez minutos de uso real.
+  final Color feedTint;
+
   /// Fondo del panel de diagnóstico de desarrollo.
   final Color panel;
   final Color panelBorder;
@@ -84,6 +95,7 @@ class HudTheme {
     alert: Color(0xFFFFB01F),
     highlight: Color(0xFFEAF9FF),
     panelFill: Color(0x2E1E6E8C),
+    feedTint: Color(0x3D0C4C66),
     panel: Color(0xD9061013),
     panelBorder: Color(0x2674E2F7),
     hairline: 1,
@@ -114,6 +126,7 @@ class HudTheme {
       alert: alert,
       highlight: highlight,
       panelFill: panelFill,
+      feedTint: feedTint,
       panel: panel,
       panelBorder: panelBorder,
       hairline: hairline * strokeFactor,

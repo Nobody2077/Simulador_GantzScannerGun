@@ -484,6 +484,9 @@ class _ScannerPageState extends State<ScannerPage>
                 ),
               ),
             ),
+            // Tinte del visor: encima de la cámara y debajo del HUD. Se tiñe
+            // la imagen, nunca las lecturas.
+            ColoredBox(color: theme.feedTint),
             // Cromo fijo: se pinta una vez y no se repinta con cada frame.
             CustomPaint(painter: ChromePainter(theme: theme)),
             // Capa de objetivo: lo único que se mueve.
