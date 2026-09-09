@@ -404,6 +404,17 @@ class TargetTracker extends ChangeNotifier {
 
   /// AC-2.5 y AC-2.6: sin lock previo gana el más cercano al centro; con lock,
   /// se conserva mientras ese id siga en cuadro.
+  ///
+  /// Devuelve `null` también cuando hay un objetivo trabado y su id **no** está
+  /// entre los detectados, aunque queden otros rostros en cuadro. La pérdida la
+  /// define el id trabado y no que el encuadre quede vacío, que es lo que pide
+  /// AC-3.5.
+  ///
+  /// Devolver otro rostro en ese caso —que es lo que se hacía— dejaba al
+  /// tracker en LOCKED apuntando a un id ausente: `_advanceState` no hace nada
+  /// en LOCKED, así que nunca pasaba a LOST, nunca corría la ventana de gracia
+  /// y nunca volvía a SEARCHING. El reticle quedaba congelado sobre el último
+  /// lugar donde estuvo esa persona y el sistema no volvía a trabar nada.
   RawTarget? _select(List<RawTarget> targets, Size imageSize) {
     if (targets.isEmpty) return null;
 
@@ -412,6 +423,7 @@ class TargetTracker extends ChangeNotifier {
       for (final target in targets) {
         if ((target.id ?? _anonymousId) == locked) return target;
       }
+      return null;
     }
 
     final center = Offset(imageSize.width / 2, imageSize.height / 2);

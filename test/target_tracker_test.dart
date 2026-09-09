@@ -90,6 +90,32 @@ void main() {
     });
   });
 
+  testWidgets('AC-3.5: el trabado se pierde aunque queden otros en cuadro',
+      (tester) async {
+    await withTracker((tracker) async {
+      lockOnto(tracker, 1);
+      await advance(tester, const Duration(milliseconds: 100));
+      expect(tracker.state, TrackingState.locked);
+
+      // El trabado se va, pero otra persona sigue en cuadro. La pérdida la
+      // define el id trabado, no que el encuadre quede vacío: devolver ese otro
+      // rostro dejaba el tracker congelado en LOCKED para siempre.
+      tracker.onInference(
+        const [RawTarget(id: 2, faceBox: offCenter)],
+        imageSize,
+      );
+      expect(tracker.state, TrackingState.lost);
+
+      // Agotada la ventana de gracia vuelve a buscar, y traba al que quedó.
+      await advance(tester, const Duration(milliseconds: 900));
+      expect(tracker.state, TrackingState.searching);
+
+      lockOnto(tracker, 2);
+      expect(tracker.state, TrackingState.locked);
+      expect(tracker.lockedId, 2);
+    });
+  });
+
   testWidgets('AC-3.6: re-adquirir dentro de la ventana vuelve a LOCKED',
       (tester) async {
     await withTracker((tracker) async {
