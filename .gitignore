@@ -48,3 +48,11 @@ app.*.map.json
 # No se versionan ni se empaquetan (AC-10.6).
 /referencias/*
 !/referencias/LEEME.md
+
+# Secretos. El repositorio es público: nada de esto entra, ni por accidente.
+.env
+.env.*
+*.pem
+*.p12
+secrets.json
+service-account*.json
