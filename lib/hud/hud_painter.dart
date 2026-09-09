@@ -51,6 +51,7 @@ class HudPainter extends CustomPainter {
     required this.theme,
     required this.mirror,
     this.reduceMotion = false,
+    this.contourVisible = true,
   }) : super(repaint: Listenable.merge([tracker, readouts]));
 
   final TargetTracker tracker;
@@ -66,12 +67,21 @@ class HudPainter extends CustomPainter {
   /// ocultar ninguna información.
   final bool reduceMotion;
 
+  /// El contorno del objetivo se dibuja o no.
+  ///
+  /// Lo gobierna el interruptor de la franja. La segmentación se sigue
+  /// corriendo: apagarlo es una decisión de composición, y volver a encenderlo
+  /// tiene que mostrar el contorno del cuadro actual y no del que había cuando
+  /// se apagó.
+  final bool contourVisible;
+
   @override
   void paint(Canvas canvas, Size size) {
     final layout = HudLayout(size, theme);
 
     _paintStatusIndicator(canvas, layout);
     _paintStripValues(canvas, layout);
+    _paintContourToggle(canvas, layout);
 
     final imageSize = tracker.imageSize;
     if (imageSize.isEmpty) {
@@ -263,6 +273,7 @@ class HudPainter extends CustomPainter {
   /// que en gama de entrada cuesta caro.
   void _paintSilhouette(
       Canvas canvas, HudLayout layout, CoordinateMapper mapper) {
+    if (!contourVisible) return;
     final silhouette = tracker.silhouette;
     if (silhouette == null || silhouette.isEmpty) return;
 
@@ -446,6 +457,63 @@ class HudPainter extends CustomPainter {
 
   // ── franja inferior ───────────────────────────────────────────────────────
 
+  /// Interruptor del contorno, con la forma de los ON/OFF de la referencia.
+  ///
+  /// Vive en la capa viva y no en el cromo porque cambia de estado, pero saca
+  /// su caja de [HudLayout] igual que el resto de la franja, que es lo que lo
+  /// mantiene alineado con lo que dibuja el cromo alrededor.
+  void _paintContourToggle(Canvas canvas, HudLayout layout) {
+    final box = layout.toggle;
+    final label = _text(
+      'CONTORNO',
+      hudText(
+        color: theme.structureDim,
+        size: theme.microSize,
+        letterSpacing: theme.microSize * 0.18,
+      ),
+    );
+    label.paint(canvas, Offset(box.left, box.top));
+
+    final color = contourVisible ? theme.structure : theme.structureDim;
+    final switchBox = Rect.fromLTWH(
+      box.left,
+      box.top + label.height + theme.microSize * 0.45,
+      box.width * 0.66,
+      theme.labelSize * 1.45,
+    );
+
+    canvas.drawRect(
+      switchBox,
+      Paint()
+        ..color = contourVisible
+            ? color.withValues(alpha: 0.25)
+            : theme.panelFill,
+    );
+    canvas.drawRect(
+      switchBox,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = theme.hairline
+        ..color = color,
+    );
+
+    final state = _text(
+      contourVisible ? 'ON' : 'OFF',
+      hudText(
+        color: contourVisible ? theme.highlight : theme.structureDim,
+        size: theme.labelSize,
+        letterSpacing: theme.labelSize * 0.12,
+      ),
+    );
+    state.paint(
+      canvas,
+      Offset(
+        switchBox.center.dx - state.width / 2,
+        switchBox.center.dy - state.height / 2,
+      ),
+    );
+  }
+
   void _paintStripValues(Canvas canvas, HudLayout layout) {
     final left = [
       readouts.value.camera.toUpperCase(),
@@ -493,5 +561,6 @@ class HudPainter extends CustomPainter {
       oldDelegate.theme != theme ||
       oldDelegate.mirror != mirror ||
       oldDelegate.reduceMotion != reduceMotion ||
+      oldDelegate.contourVisible != contourVisible ||
       oldDelegate.readouts != readouts;
 }

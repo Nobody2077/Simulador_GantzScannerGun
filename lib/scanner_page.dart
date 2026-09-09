@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:google_mlkit_selfie_segmentation/google_mlkit_selfie_segmentation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'audio/hud_audio.dart';
 import 'hud/chrome_painter.dart';
 import 'hud/diagnostics_panel.dart';
+import 'hud/hud_layout.dart';
 import 'hud/hud_painter.dart';
 import 'hud/hud_theme.dart';
 import 'tracking/coordinate_mapper.dart';
@@ -98,12 +100,44 @@ class _ScannerPageState extends State<ScannerPage>
   int _segmentationMs = 0;
   bool _showDiagnostics = false;
 
+  /// Interruptor del contorno, persistido entre sesiones igual que el silencio.
+  ///
+  /// Arranca encendido: es la marca que distingue al objetivo trabado, y quien
+  /// no la quiera la apaga una vez.
+  static const String _contourKey = 'hud.contour';
+  bool _contourVisible = true;
+  SharedPreferences? _preferences;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _audio.initialize();
+    _loadPreferences();
     _start();
+  }
+
+  /// Recupera el interruptor del contorno.
+  ///
+  /// Si las preferencias fallan se arranca con el contorno visible: quedarse
+  /// sin poder guardar la elección es molesto, pero no es motivo para no
+  /// arrancar.
+  Future<void> _loadPreferences() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(() {
+        _preferences = preferences;
+        _contourVisible = preferences.getBool(_contourKey) ?? true;
+      });
+    } catch (_) {
+      // Sin preferencias, el valor por defecto sigue siendo válido.
+    }
+  }
+
+  void _toggleContour() {
+    setState(() => _contourVisible = !_contourVisible);
+    _preferences?.setBool(_contourKey, _contourVisible);
   }
 
   @override
@@ -464,10 +498,11 @@ class _ScannerPageState extends State<ScannerPage>
     return LayoutBuilder(
       builder: (context, constraints) => GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTapUp: (details) => _onTapTarget(
+        onTapUp: (details) => _onTap(
           details.localPosition,
           constraints.biggest,
           mirror,
+          theme,
         ),
         child: Stack(
           fit: StackFit.expand,
@@ -497,6 +532,7 @@ class _ScannerPageState extends State<ScannerPage>
                 theme: theme,
                 mirror: mirror,
                 reduceMotion: _reduceMotion,
+                contourVisible: _contourVisible,
               ),
             ),
           ],
@@ -505,15 +541,28 @@ class _ScannerPageState extends State<ScannerPage>
     );
   }
 
-  /// Traba el objetivo que el usuario tocó, o suelta el lock manual si el toque
-  /// cayó en zona vacía.
+  /// Resuelve un toque en pantalla.
   ///
-  /// El acierto se resuelve mapeando cada encuadre **hacia adelante** —de
-  /// imagen a pantalla— en lugar de invertir el mapper. Son unas pocas cajas
-  /// por toque, y evita mantener una segunda transformación capaz de
-  /// desincronizarse de la que dibuja: es la invariante del preview y el mapper
-  /// aplicada al tacto.
-  void _onTapTarget(Offset position, Size canvasSize, bool mirror) {
+  /// El orden importa: primero el interruptor de la franja, después los
+  /// objetivos. Al revés, un objetivo que quedara sobre la franja se comería el
+  /// interruptor.
+  ///
+  /// El acierto sobre un objetivo se resuelve mapeando cada encuadre **hacia
+  /// adelante** —de imagen a pantalla— en lugar de invertir el mapper. Son unas
+  /// pocas cajas por toque, y evita mantener una segunda transformación capaz
+  /// de desincronizarse de la que dibuja: es la invariante del preview y el
+  /// mapper aplicada al tacto.
+  void _onTap(
+    Offset position,
+    Size canvasSize,
+    bool mirror,
+    HudTheme theme,
+  ) {
+    if (HudLayout(canvasSize, theme).toggle.contains(position)) {
+      _toggleContour();
+      return;
+    }
+
     final imageSize = _tracker.imageSize;
     if (imageSize.isEmpty) return;
 

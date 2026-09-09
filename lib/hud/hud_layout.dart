@@ -64,6 +64,21 @@ class HudLayout {
     );
   }
 
+  /// Caja del interruptor del contorno, entre el bloque izquierdo de la franja
+  /// y el núcleo central.
+  ///
+  /// La franja la dibuja el cromo estático, pero un interruptor cambia de
+  /// estado y por eso vive en la capa viva. Su posición sale de acá igual que
+  /// la de todo lo demás, para que el dibujo y el área táctil resuelvan la
+  /// misma caja: si se separan, el interruptor se ve en un lado y responde en
+  /// otro.
+  late final Rect toggle = Rect.fromLTWH(
+    strip.left + strip.width * 0.31 + _stripPad * 2,
+    strip.top + _stripPad,
+    strip.width * 0.155,
+    strip.height - _stripPad * 2,
+  );
+
   /// Centro del elemento circular de la franja.
   late final Offset stripHub = Offset(strip.center.dx, strip.center.dy);
 
