@@ -163,6 +163,87 @@ void main() {
     });
   });
 
+  testWidgets('sostenido, un rostro mucho más centrado sí se lleva el lock',
+      (tester) async {
+    await withTracker((tracker) async {
+      lockOnto(tracker, 1);
+
+      // La misma escena que AC-2.6, pero sostenida. Un cuadro suelto no mueve
+      // nada; apuntar el aparato a otra persona, sí.
+      for (var i = 0; i < 8; i++) {
+        tracker.onInference(
+          const [
+            RawTarget(id: 1, faceBox: offCenter),
+            RawTarget(id: 2, faceBox: center),
+          ],
+          imageSize,
+        );
+      }
+
+      expect(tracker.lockedId, 2);
+      expect(tracker.state, TrackingState.locked);
+    });
+  });
+
+  testWidgets('tocar un sujeto lo traba aunque no sea el más centrado',
+      (tester) async {
+    await withTracker((tracker) async {
+      lockOnto(tracker, 1);
+      tracker.onInference(
+        const [
+          RawTarget(id: 1, faceBox: center),
+          RawTarget(id: 2, faceBox: offCenter),
+        ],
+        imageSize,
+      );
+
+      expect(tracker.lockOn(99), isFalse, reason: 'ese id no está en cuadro');
+      expect(tracker.lockOn(2), isTrue);
+      expect(tracker.state, TrackingState.acquiring,
+          reason: 'un lock nuevo se adquiere, no aparece ya cerrado');
+
+      for (var i = 0; i < 3; i++) {
+        tracker.onInference(
+          const [
+            RawTarget(id: 1, faceBox: center),
+            RawTarget(id: 2, faceBox: offCenter),
+          ],
+          imageSize,
+        );
+      }
+
+      expect(tracker.lockedId, 2);
+      expect(tracker.state, TrackingState.locked);
+    });
+  });
+
+  testWidgets('el lock manual no se lo lleva la regla automática',
+      (tester) async {
+    await withTracker((tracker) async {
+      const scene = [
+        RawTarget(id: 1, faceBox: offCenter),
+        RawTarget(id: 2, faceBox: center),
+      ];
+
+      lockOnto(tracker, 1);
+      expect(tracker.lockOn(1), isTrue);
+      expect(tracker.manualLock, isTrue);
+
+      for (var i = 0; i < 10; i++) {
+        tracker.onInference(scene, imageSize);
+      }
+      expect(tracker.lockedId, 1,
+          reason: 'el toque manda sobre la regla automática');
+
+      // Al soltarlo vuelve a mandar el automático, sin haber perdido a nadie.
+      tracker.releaseManualLock();
+      for (var i = 0; i < 10; i++) {
+        tracker.onInference(scene, imageSize);
+      }
+      expect(tracker.lockedId, 2);
+    });
+  });
+
   testWidgets('AC-2.5: sin lock previo gana el más cercano al centro',
       (tester) async {
     await withTracker((tracker) async {

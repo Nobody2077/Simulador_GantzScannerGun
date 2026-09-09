@@ -68,6 +68,8 @@ class TrackingConfig {
     this.minFaceWidthPx = 18,
     this.markGrace = const Duration(milliseconds: 400),
     this.orderBandMeters = 0.35,
+    this.retargetMargin = 0.12,
+    this.inferencesToRetarget = 5,
   });
 
   /// AC-3.3: inferencias consecutivas con el mismo id para pasar a LOCKED.
@@ -118,6 +120,20 @@ class TrackingConfig {
   /// de inferencia. Por debajo de esta diferencia el orden no cambia. Es la
   /// misma idea de AC-5.4, aplicada al orden en vez de a la posición.
   final double orderBandMeters;
+
+  /// Cuánto más centrado tiene que estar otro rostro para disputar el lock,
+  /// como fracción del lado corto de la imagen.
+  ///
+  /// Es el margen que convierte "apuntar a otra persona" en una intención y no
+  /// en un accidente. Con 0 el lock salta con cualquier diferencia, que es
+  /// exactamente el flapping que AC-2.6 fue escrito para evitar.
+  final double retargetMargin;
+
+  /// Inferencias seguidas que el aspirante tiene que sostener esa ventaja.
+  ///
+  /// Junto con [retargetMargin] es lo que separa girar el aparato hacia otra
+  /// persona de que alguien cruce por delante un instante.
+  final int inferencesToRetarget;
 }
 
 /// Clave interna para los objetivos sin `trackingId`.
@@ -175,6 +191,14 @@ class TargetTracker extends ChangeNotifier {
   /// banda muerta: sin memoria del orden anterior no hay histéresis posible.
   final List<int> _order = [];
 
+  /// El lock lo pidió el usuario, no la selección automática.
+  bool _manualLock = false;
+
+  /// Aspirante a robarle el lock al trabado, y cuántas inferencias seguidas
+  /// lleva sosteniendo su ventaja.
+  int? _challengerKey;
+  int _challengerCount = 0;
+
   Size _imageSize = Size.zero;
   bool _outOfRange = false;
   bool _calibrated = false;
@@ -195,6 +219,9 @@ class TargetTracker extends ChangeNotifier {
 
   /// AC-3.8: derivado de la distancia, independiente del estado de tracking.
   bool get outOfRange => _outOfRange;
+
+  /// El objetivo actual lo eligió el usuario y no la selección automática.
+  bool get manualLock => _manualLock;
 
   /// AC-4.4: `false` mientras el hFOV real no esté disponible.
   bool get calibrated => _calibrated;
@@ -300,6 +327,8 @@ class TargetTracker extends ChangeNotifier {
       }
     }
 
+    _considerRetarget(targets, imageSize);
+
     final target = _select(targets, imageSize);
     if (target == null) {
       _onTargetMissing();
@@ -320,6 +349,102 @@ class TargetTracker extends ChangeNotifier {
     _touch();
     _reorder();
     _ensureTicking();
+  }
+
+  /// Traba el objetivo [id] porque el usuario lo pidió.
+  ///
+  /// El lock manual manda sobre la regla automática hasta que ese objetivo se
+  /// pierda de verdad. Si el toque se lo pudiera robar [_considerRetarget] a la
+  /// inferencia siguiente, tocar no serviría de nada.
+  ///
+  /// Devuelve `false` si ese id ya no está en cuadro, que es lo que pasa cuando
+  /// el toque llega justo después de que el objetivo saliera.
+  bool lockOn(int id) {
+    if (!_measured.containsKey(id) && !_smoothed.containsKey(id)) return false;
+
+    _manualLock = true;
+    // Tocar al que ya está trabado no reinicia la adquisición: solo lo fija.
+    if (id != _lockedKey) _startAcquiring(id);
+    _ensureTicking();
+    notifyListeners();
+    return true;
+  }
+
+  /// Devuelve el lock a la selección automática, sin soltar el objetivo actual.
+  ///
+  /// Es la contraparte de [lockOn]: sin esto, un toque dejaría al sistema fijo
+  /// en esa persona hasta perderla, sin forma de volver atrás.
+  void releaseManualLock() {
+    if (!_manualLock) return;
+    _manualLock = false;
+    notifyListeners();
+  }
+
+  /// Pasa el lock a otro rostro cuando queda claramente más centrado.
+  ///
+  /// AC-2.6 impide que dos rostros a distancias parecidas del centro se roben
+  /// el lock entre sí. Esto lo complementa sin contradecirlo: el cambio exige
+  /// un margen ([TrackingConfig.retargetMargin]) y varias inferencias seguidas
+  /// ([TrackingConfig.inferencesToRetarget]), así que apuntar el aparato a otra
+  /// persona re-traba, pero alguien que cruza por delante un instante no.
+  void _considerRetarget(List<RawTarget> targets, Size imageSize) {
+    if (_manualLock || _state != TrackingState.locked) return;
+    if (imageSize.isEmpty) return;
+
+    final center = Offset(imageSize.width / 2, imageSize.height / 2);
+    double offsetOf(RawTarget target) =>
+        (target.faceBox.center - center).distance;
+
+    RawTarget? locked;
+    RawTarget? challenger;
+    var challengerOffset = double.infinity;
+    for (final target in targets) {
+      if ((target.id ?? _anonymousId) == _lockedKey) {
+        locked = target;
+        continue;
+      }
+      final offset = offsetOf(target);
+      if (offset < challengerOffset) {
+        challengerOffset = offset;
+        challenger = target;
+      }
+    }
+
+    // Sin el trabado en cuadro no hay disputa: la pérdida la resuelve _select.
+    final margin = imageSize.shortestSide * config.retargetMargin;
+    if (locked == null ||
+        challenger == null ||
+        challengerOffset > offsetOf(locked) - margin) {
+      _challengerKey = null;
+      _challengerCount = 0;
+      return;
+    }
+
+    final key = challenger.id ?? _anonymousId;
+    if (key == _challengerKey) {
+      _challengerCount++;
+    } else {
+      _challengerKey = key;
+      _challengerCount = 1;
+    }
+
+    if (_challengerCount >= config.inferencesToRetarget) _startAcquiring(key);
+  }
+
+  /// Empieza a adquirir [key] desde cero.
+  ///
+  /// Reinicia el cierre del reticle a propósito: un lock nuevo tiene que
+  /// mostrarse como tal, no aparecer ya cerrado sobre otra persona.
+  void _startAcquiring(int key) {
+    _lockedKey = key;
+    _consecutive = 1;
+    _state = TrackingState.acquiring;
+    _lockedAt = null;
+    _acquireProgress = 0;
+    _lockPulse = 0;
+    _silhouette = null;
+    _challengerKey = null;
+    _challengerCount = 0;
   }
 
   /// Anota qué marcas siguen en cuadro y cuáles empezaron a faltar.
@@ -444,10 +569,7 @@ class TargetTracker extends ChangeNotifier {
 
     switch (_state) {
       case TrackingState.searching:
-        // AC-3.2
-        _lockedKey = key;
-        _consecutive = 1;
-        _state = TrackingState.acquiring;
+        _startAcquiring(key); // AC-3.2
 
       case TrackingState.acquiring:
         if (key == _lockedKey) {
@@ -459,8 +581,7 @@ class TargetTracker extends ChangeNotifier {
             _lockPulse = 1;
           }
         } else {
-          _lockedKey = key;
-          _consecutive = 1;
+          _startAcquiring(key);
         }
 
       case TrackingState.locked:
@@ -471,12 +592,7 @@ class TargetTracker extends ChangeNotifier {
           // AC-3.6: vuelve a LOCKED sin repetir la animación de adquisición.
           _state = TrackingState.locked;
         } else {
-          _lockedKey = key;
-          _consecutive = 1;
-          _state = TrackingState.acquiring;
-          _lockedAt = null;
-          _acquireProgress = 0;
-          _silhouette = null;
+          _startAcquiring(key);
         }
     }
   }
@@ -614,6 +730,9 @@ class TargetTracker extends ChangeNotifier {
     _smoothedDistance.clear();
     _missingSeconds.clear();
     _order.clear();
+    _manualLock = false;
+    _challengerKey = null;
+    _challengerCount = 0;
     _outOfRange = false;
     _acquireProgress = 0;
     _silhouette = null;

@@ -398,8 +398,11 @@ class _ScannerPageState extends State<ScannerPage>
                 '${distance.toStringAsFixed(1)} m'
                 '${_tracker.outOfRange ? " · fuera" : ""}',
       ),
-      DiagnosticRow('lock',
-          'id ${_tracker.lockedId ?? "—"} · ${_tracker.lockedForSeconds}s'),
+      DiagnosticRow(
+        'lock',
+        'id ${_tracker.lockedId ?? "—"} · ${_tracker.lockedForSeconds}s'
+            ' · ${_tracker.manualLock ? "manual" : "auto"}',
+      ),
       DiagnosticRow('audio', _audio.status),
     ];
   }
@@ -455,35 +458,88 @@ class _ScannerPageState extends State<ScannerPage>
     final mirror =
         _cameras[_cameraIndex].lensDirection == CameraLensDirection.front;
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // El preview se dispone con el mismo tamaño que usa el mapper.
-        // Esa coincidencia es lo que hace que el reticle caiga sobre el objetivo.
-        ClipRect(
-          child: FittedBox(
-            fit: BoxFit.cover,
-            child: SizedBox(
-              width: imageSize.width,
-              height: imageSize.height,
-              child: CameraPreview(controller),
+    // LayoutBuilder y no MediaQuery: el mapeo del toque tiene que usar
+    // exactamente el mismo tamaño que reciben los painters, no el de la
+    // ventana. Si se desacoplan, el toque cae sobre el objetivo equivocado.
+    return LayoutBuilder(
+      builder: (context, constraints) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapUp: (details) => _onTapTarget(
+          details.localPosition,
+          constraints.biggest,
+          mirror,
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // El preview se dispone con el mismo tamaño que usa el mapper. Esa
+            // coincidencia es lo que hace que el reticle caiga sobre el objetivo.
+            ClipRect(
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: imageSize.width,
+                  height: imageSize.height,
+                  child: CameraPreview(controller),
+                ),
+              ),
             ),
-          ),
+            // Cromo fijo: se pinta una vez y no se repinta con cada frame.
+            CustomPaint(painter: ChromePainter(theme: theme)),
+            // Capa de objetivo: lo único que se mueve.
+            CustomPaint(
+              painter: HudPainter(
+                tracker: _tracker,
+                readouts: _readouts,
+                theme: theme,
+                mirror: mirror,
+                reduceMotion: _reduceMotion,
+              ),
+            ),
+          ],
         ),
-        // Cromo fijo: se pinta una vez y no se repinta con cada frame.
-        CustomPaint(painter: ChromePainter(theme: theme)),
-        // Capa de objetivo: lo único que se mueve.
-        CustomPaint(
-          painter: HudPainter(
-            tracker: _tracker,
-            readouts: _readouts,
-            theme: theme,
-            mirror: mirror,
-            reduceMotion: _reduceMotion,
-          ),
-        ),
-      ],
+      ),
     );
+  }
+
+  /// Traba el objetivo que el usuario tocó, o suelta el lock manual si el toque
+  /// cayó en zona vacía.
+  ///
+  /// El acierto se resuelve mapeando cada encuadre **hacia adelante** —de
+  /// imagen a pantalla— en lugar de invertir el mapper. Son unas pocas cajas
+  /// por toque, y evita mantener una segunda transformación capaz de
+  /// desincronizarse de la que dibuja: es la invariante del preview y el mapper
+  /// aplicada al tacto.
+  void _onTapTarget(Offset position, Size canvasSize, bool mirror) {
+    final imageSize = _tracker.imageSize;
+    if (imageSize.isEmpty) return;
+
+    final mapper = CoordinateMapper(
+      imageSize: imageSize,
+      canvasSize: canvasSize,
+      mirror: mirror,
+    );
+
+    int? hit;
+    var hitArea = double.infinity;
+    for (final mark in _tracker.orderedMarks) {
+      final box = mapper.mapRect(mark.bodyBox);
+      if (!box.contains(position)) continue;
+
+      // Con dos encuadres superpuestos gana el más chico: el grande es el del
+      // sujeto más cercano, que ocupa media pantalla y se tragaría al de atrás.
+      final area = box.width * box.height;
+      if (area < hitArea) {
+        hitArea = area;
+        hit = mark.id;
+      }
+    }
+
+    if (hit == null) {
+      _tracker.releaseManualLock();
+    } else {
+      _tracker.lockOn(hit);
+    }
   }
 
   Widget _buildError(String message) {
