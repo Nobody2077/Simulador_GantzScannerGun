@@ -21,11 +21,27 @@ class RawTarget {
 /// Objetivo listo para dibujar, con el encuadre del cuerpo ya suavizado.
 @immutable
 class TargetMark {
-  const TargetMark({required this.id, required this.bodyBox});
+  const TargetMark({
+    required this.id,
+    required this.bodyBox,
+    this.distanceMeters,
+    this.locked = false,
+    this.vitality = 1,
+  });
 
   /// Negativo cuando ML Kit no asignó un trackingId.
   final int id;
   final Rect bodyBox;
+
+  /// Distancia estimada y suavizada, o `null` mientras la caja sea demasiado
+  /// chica para que la cuenta signifique algo.
+  final double? distanceMeters;
+
+  /// El objetivo principal. Sigue habiendo uno solo.
+  final bool locked;
+
+  /// Barra del sujeto, de 0 a 1. Hoy siempre llena.
+  final double vitality;
 }
 
 /// Umbrales de tracking y suavizado, expuestos como configuración y no como
@@ -42,6 +58,8 @@ class TrackingConfig {
     this.deadBandPx = 2,
     this.maxRangeMeters = 8,
     this.minFaceWidthPx = 18,
+    this.markGrace = const Duration(milliseconds: 400),
+    this.orderBandMeters = 0.35,
   });
 
   /// AC-3.3: inferencias consecutivas con el mismo id para pasar a LOCKED.
@@ -77,6 +95,21 @@ class TrackingConfig {
   /// aviso saltaba a los 3,5 m y contradecía al límite de distancia.
   final double maxRangeMeters;
   final double minFaceWidthPx;
+
+  /// Cuánto se sostiene una marca después de perderla de vista.
+  ///
+  /// ML Kit deja caer un rostro por un cuadro suelto cada tanto. Sin esta
+  /// ventana, la columna de sujetos y sus ganchos titilan al ritmo de esos
+  /// fallos. Es la misma idea de la ventana de gracia de `LOST` (AC-3.5), más
+  /// corta porque acá no hay nada que re-adquirir: solo se evita el parpadeo.
+  final Duration markGrace;
+
+  /// Banda muerta del orden de la columna de sujetos, en metros.
+  ///
+  /// Dos personas a distancias parecidas se intercambiaban de puesto a la tasa
+  /// de inferencia. Por debajo de esta diferencia el orden no cambia. Es la
+  /// misma idea de AC-5.4, aplicada al orden en vez de a la posición.
+  final double orderBandMeters;
 }
 
 /// Clave interna para los objetivos sin `trackingId`.
@@ -122,8 +155,17 @@ class TargetTracker extends ChangeNotifier {
   final Map<int, Rect> _measured = {};
   final Map<int, Rect> _smoothed = {};
 
-  double? _measuredDistance;
-  double? _smoothedDistance;
+  /// Distancia por objetivo, no solo la del trabado: es lo que ordena la
+  /// columna de sujetos.
+  final Map<int, double> _measuredDistance = {};
+  final Map<int, double> _smoothedDistance = {};
+
+  /// Segundos que lleva sin verse cada marca que dejó de reportarse.
+  final Map<int, double> _missingSeconds = {};
+
+  /// Orden de la columna, sostenido entre inferencias. Es lo que permite la
+  /// banda muerta: sin memoria del orden anterior no hay histéresis posible.
+  final List<int> _order = [];
 
   Size _imageSize = Size.zero;
   bool _outOfRange = false;
@@ -149,7 +191,11 @@ class TargetTracker extends ChangeNotifier {
   /// AC-4.4: `false` mientras el hFOV real no esté disponible.
   bool get calibrated => _calibrated;
 
-  double? get distanceMeters => _smoothedDistance;
+  /// Distancia del objetivo trabado, que es la que va en la franja inferior.
+  double? get distanceMeters {
+    final key = _lockedKey;
+    return key == null ? null : _smoothedDistance[key];
+  }
 
   /// Avance del cierre del reticle sobre el objetivo, de 0 a 1.
   double get acquireProgress => _acquireProgress;
@@ -187,15 +233,28 @@ class TargetTracker extends ChangeNotifier {
     return face == null ? null : BodyGeometry.fromFace(face);
   }
 
-  /// Los demás rostros en cuadro, para dibujarlos como marcas secundarias.
-  List<TargetMark> get secondaryMarks => [
-        for (final entry in _smoothed.entries)
-          if (entry.key != _lockedKey)
+  /// Todos los objetivos en cuadro, del más cercano al más lejano.
+  ///
+  /// El orden lo sostiene [_order] con banda muerta, así que dos sujetos a
+  /// distancias parecidas no se intercambian de puesto en cada inferencia.
+  ///
+  /// Un id puede estar en el orden antes de tener caja suavizada —el suavizado
+  /// engancha en el tick siguiente a la inferencia—; esas marcas se saltean y
+  /// aparecen un cuadro después, que no se ve.
+  List<TargetMark> get orderedMarks => [
+        for (final id in _order)
+          if (_smoothed[id] case final face?)
             TargetMark(
-              id: entry.key,
-              bodyBox: BodyGeometry.fromFace(entry.value),
+              id: id,
+              bodyBox: BodyGeometry.fromFace(face),
+              distanceMeters: _smoothedDistance[id],
+              locked: id == _lockedKey,
             ),
       ];
+
+  /// Los demás rostros en cuadro, para dibujarlos como marcas secundarias.
+  List<TargetMark> get secondaryMarks =>
+      orderedMarks.where((mark) => !mark.locked).toList();
 
   /// Segundos que lleva sostenido el objetivo actual.
   int get lockedForSeconds => _lockedAt == null
@@ -217,39 +276,115 @@ class TargetTracker extends ChangeNotifier {
         targets.map((t) => MapEntry(t.id ?? _anonymousId, t.faceBox)),
       );
 
+    // La distancia se estima para todos los objetivos en cuadro, no solo para
+    // el trabado: es lo que ordena la columna de sujetos. Cuesta una división
+    // por rostro, así que el gasto es despreciable frente a la inferencia.
+    _measuredDistance.clear();
+    for (final candidate in targets) {
+      final estimate = estimator.estimate(
+        faceWidthPx: candidate.faceBox.width,
+        imageWidthPx: imageSize.width,
+        hFovDegrees: hFovDegrees,
+      );
+      if (estimate != null) {
+        _measuredDistance[candidate.id ?? _anonymousId] = estimate;
+      }
+    }
+
     final target = _select(targets, imageSize);
     if (target == null) {
       _onTargetMissing();
-      _prune();
+      _touch();
+      _reorder();
+      _ensureTicking();
       return;
     }
 
-    _measuredDistance = estimator.estimate(
-      faceWidthPx: target.faceBox.width,
-      imageWidthPx: imageSize.width,
-      hFovDegrees: hFovDegrees,
-    );
-
     // AC-4.6: fuera de rango por distancia o porque el objetivo es ya demasiado
     // chico para que la estimación signifique algo.
-    final distance = _measuredDistance;
+    final distance = _measuredDistance[target.id ?? _anonymousId];
     _outOfRange = (distance != null && distance > config.maxRangeMeters) ||
         target.faceBox.width < config.minFaceWidthPx;
 
     _advanceState(target);
     _lostSeconds = 0;
-    _prune();
+    _touch();
+    _reorder();
     _ensureTicking();
   }
 
-  /// Descarta los suavizados de objetivos que ya no están en cuadro.
+  /// Anota qué marcas siguen en cuadro y cuáles empezaron a faltar.
   ///
-  /// El objetivo trabado sobrevive a la poda: es lo que deja el reticle
-  /// congelado durante LOST (AC-3.5).
-  void _prune() {
-    _smoothed.removeWhere(
-      (id, _) => !_measured.containsKey(id) && id != _lockedKey,
-    );
+  /// No borra nada: la marca que dejó de reportarse se sostiene su ventana de
+  /// gracia y la retira [_expireMissing] desde el tick.
+  void _touch() {
+    for (final id in _measured.keys) {
+      _missingSeconds.remove(id);
+    }
+    for (final id in _smoothed.keys) {
+      if (!_measured.containsKey(id)) _missingSeconds.putIfAbsent(id, () => 0);
+    }
+  }
+
+  /// Retira las marcas que agotaron su ventana de gracia.
+  ///
+  /// El objetivo trabado sobrevive: tiene la suya, más larga, y es lo que deja
+  /// el reticle congelado durante LOST (AC-3.5).
+  bool _expireMissing(double dt) {
+    if (_missingSeconds.isEmpty) return false;
+
+    final grace = config.markGrace.inMilliseconds / 1000;
+    var changed = false;
+    for (final id in _missingSeconds.keys.toList()) {
+      final elapsed = _missingSeconds[id]! + dt;
+      if (elapsed >= grace && id != _lockedKey) {
+        _missingSeconds.remove(id);
+        _smoothed.remove(id);
+        _measuredDistance.remove(id);
+        _smoothedDistance.remove(id);
+        _order.remove(id);
+        changed = true;
+      } else {
+        _missingSeconds[id] = elapsed;
+      }
+    }
+    return changed;
+  }
+
+  /// Reordena la columna: el más cercano arriba, el más lejano abajo.
+  ///
+  /// Parte del orden anterior y solo intercambia vecinos cuando la diferencia
+  /// de distancia supera [TrackingConfig.orderBandMeters]. Ordenar de cero en
+  /// cada inferencia hacía saltar de puesto a dos personas paradas a la misma
+  /// distancia. Los objetivos sin distancia estimada quedan al final: no se
+  /// sabe dónde ponerlos, y adivinar los haría saltar igual.
+  void _reorder() {
+    final present = {..._smoothed.keys, ..._measured.keys};
+    _order
+      ..removeWhere((id) => !present.contains(id))
+      ..addAll(present.where((id) => !_order.contains(id)));
+
+    double? distanceOf(int id) => _smoothedDistance[id] ?? _measuredDistance[id];
+
+    // Burbuja con banda: converge en pocas pasadas porque el orden ya viene
+    // casi resuelto de la inferencia anterior.
+    for (var pass = 0; pass < _order.length; pass++) {
+      var swapped = false;
+      for (var i = 0; i + 1 < _order.length; i++) {
+        final a = distanceOf(_order[i]);
+        final b = distanceOf(_order[i + 1]);
+        final shouldSwap = a == null
+            ? b != null
+            : b != null && a > b + config.orderBandMeters;
+        if (shouldSwap) {
+          final held = _order[i];
+          _order[i] = _order[i + 1];
+          _order[i + 1] = held;
+          swapped = true;
+        }
+      }
+      if (!swapped) break;
+    }
   }
 
   void _ensureTicking() {
@@ -357,7 +492,8 @@ class TargetTracker extends ChangeNotifier {
       }
     }
 
-    final moved = _advanceSmoothing(dt) | _advanceAnimations(dt);
+    final moved =
+        _advanceSmoothing(dt) | _advanceAnimations(dt) | _expireMissing(dt);
     if (moved || _state != previousState) notifyListeners();
 
     // Sin objetivo ni reticle que sostener, no hay nada que animar.
@@ -391,19 +527,21 @@ class TargetTracker extends ChangeNotifier {
       }
     }
 
-    final measuredDistance = _measuredDistance;
-    if (measuredDistance != null) {
-      final current = _smoothedDistance;
+    // AC-5.6: cada objetivo lleva su propio suavizado de distancia, con una
+    // constante de tiempo mayor que la de la caja para que el número no
+    // parpadee entre valores.
+    final kd = 1 - math.exp(-dt / config.distanceTimeConstant);
+    for (final entry in _measuredDistance.entries) {
+      final current = _smoothedDistance[entry.key];
       if (current == null) {
-        _smoothedDistance = measuredDistance;
+        _smoothedDistance[entry.key] = entry.value;
         moved = true;
-      } else {
-        final kd = 1 - math.exp(-dt / config.distanceTimeConstant);
-        final next = current + (measuredDistance - current) * kd;
-        if ((next - current).abs() > 0.001) {
-          _smoothedDistance = next;
-          moved = true;
-        }
+        continue;
+      }
+      final next = current + (entry.value - current) * kd;
+      if ((next - current).abs() > 0.001) {
+        _smoothedDistance[entry.key] = next;
+        moved = true;
       }
     }
 
@@ -451,8 +589,10 @@ class TargetTracker extends ChangeNotifier {
     _lostSeconds = 0;
     _smoothed.clear();
     _measured.clear();
-    _measuredDistance = null;
-    _smoothedDistance = null;
+    _measuredDistance.clear();
+    _smoothedDistance.clear();
+    _missingSeconds.clear();
+    _order.clear();
     _outOfRange = false;
     _acquireProgress = 0;
     _silhouette = null;

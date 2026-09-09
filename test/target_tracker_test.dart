@@ -202,9 +202,111 @@ void main() {
         const [RawTarget(id: 1, faceBox: center)],
         imageSize,
       );
+
+      // Dentro de la ventana de gracia la marca se sostiene: ML Kit deja caer
+      // un rostro por un cuadro suelto y sin esto la columna titila.
+      await advance(tester, const Duration(milliseconds: 100));
+      expect(tracker.secondaryMarks, hasLength(1));
+
+      // Agotada la ventana, se retira.
+      await advance(tester, const Duration(milliseconds: 400));
+      expect(tracker.secondaryMarks, isEmpty);
+    });
+  });
+
+  testWidgets('un secundario que reaparece dentro de la gracia no parpadea',
+      (tester) async {
+    await withTracker((tracker) async {
+      tracker.onInference(
+        const [
+          RawTarget(id: 1, faceBox: center),
+          RawTarget(id: 2, faceBox: offCenter),
+        ],
+        imageSize,
+      );
       await advance(tester, const Duration(milliseconds: 100));
 
-      expect(tracker.secondaryMarks, isEmpty);
+      // Un cuadro sin el secundario, como cuando la detección lo pierde.
+      tracker.onInference(const [RawTarget(id: 1, faceBox: center)], imageSize);
+      await advance(tester, const Duration(milliseconds: 100));
+
+      tracker.onInference(
+        const [
+          RawTarget(id: 1, faceBox: center),
+          RawTarget(id: 2, faceBox: offCenter),
+        ],
+        imageSize,
+      );
+      await advance(tester, const Duration(milliseconds: 500));
+
+      expect(tracker.secondaryMarks, hasLength(1));
+    });
+  });
+
+  testWidgets('la columna se ordena por cercanía, con el trabado en su puesto',
+      (tester) async {
+    await withTracker((tracker) async {
+      // Rostro más ancho, sujeto más cerca. El trabado mide 60 px (≈1,2 m), así
+      // que el cercano tiene que medir bastante más y el lejano, menos. La
+      // separación tiene que superar la banda muerta del orden: 120 px quedan a
+      // ≈0,6 m y 20 px a ≈3,6 m.
+      const near = Rect.fromLTWH(20, 190, 120, 156);
+      const far = Rect.fromLTWH(560, 200, 20, 26);
+
+      // Se traba el del centro, que no es ni el más cercano ni el más lejano.
+      lockOnto(tracker, 1);
+      tracker.onInference(
+        const [
+          RawTarget(id: 1, faceBox: center),
+          RawTarget(id: 2, faceBox: near),
+          RawTarget(id: 3, faceBox: far),
+        ],
+        imageSize,
+      );
+      await advance(tester, const Duration(milliseconds: 300));
+
+      final marks = tracker.orderedMarks;
+      expect(marks.map((m) => m.id), [2, 1, 3],
+          reason: 'del más cercano al más lejano');
+      expect(marks.singleWhere((m) => m.locked).id, 1,
+          reason: 'el trabado conserva su puesto en el orden, no encabeza');
+      expect(marks.every((m) => m.distanceMeters != null), isTrue,
+          reason: 'la distancia se estima para todos, no solo para el trabado');
+    });
+  });
+
+  testWidgets('la banda muerta evita que dos sujetos se roben el puesto',
+      (tester) async {
+    await withTracker((tracker) async {
+      // Dos rostros casi del mismo ancho: la diferencia de distancia queda por
+      // debajo de la banda de 0,35 m.
+      const first = Rect.fromLTWH(20, 200, 40, 52);
+      const second = Rect.fromLTWH(560, 200, 39, 51);
+
+      lockOnto(tracker, 1);
+      tracker.onInference(
+        const [
+          RawTarget(id: 1, faceBox: center),
+          RawTarget(id: 2, faceBox: first),
+          RawTarget(id: 3, faceBox: second),
+        ],
+        imageSize,
+      );
+      await advance(tester, const Duration(milliseconds: 300));
+      final before = tracker.orderedMarks.map((m) => m.id).toList();
+
+      // Se invierten los anchos: sin banda muerta, 2 y 3 se intercambiarían.
+      tracker.onInference(
+        const [
+          RawTarget(id: 1, faceBox: center),
+          RawTarget(id: 2, faceBox: second),
+          RawTarget(id: 3, faceBox: first),
+        ],
+        imageSize,
+      );
+      await advance(tester, const Duration(milliseconds: 300));
+
+      expect(tracker.orderedMarks.map((m) => m.id), before);
     });
   });
 

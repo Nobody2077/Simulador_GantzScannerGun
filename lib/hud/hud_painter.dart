@@ -88,24 +88,102 @@ class HudPainter extends CustomPainter {
       mirror: mirror,
     );
 
-    // Los secundarios van primero, por debajo: la jerarquía tiene que leerse
-    // aunque dos objetivos se solapen.
-    for (final mark in tracker.secondaryMarks) {
+    // Los objetivos ya vienen del tracker en orden de cercanía.
+    final visible = <TargetReadout>[];
+    for (final mark in tracker.orderedMarks) {
       final box = _visible(mapper.mapRect(mark.bodyBox), layout);
-      if (box != null) _paintSecondary(canvas, layout, box, mark.id);
+      if (box == null) continue;
+      visible.add(TargetReadout(
+        id: mark.id < 0 ? null : mark.id,
+        bodyBox: box,
+        distanceMeters: mark.distanceMeters,
+        locked: mark.locked,
+        calibrated: tracker.calibrated,
+        vitality: mark.vitality,
+      ));
     }
 
-    final body = tracker.bodyBox;
-    final box = body == null ? null : _visible(mapper.mapRect(body), layout);
-    if (box != null) {
+    final labelled = _labelled(visible, labelledTargetLimit(size));
+
+    // Los secundarios van primero, por debajo: la jerarquía tiene que leerse
+    // aunque dos objetivos se solapen.
+    for (final readout in visible) {
+      if (readout.locked) continue;
+      _paintSecondary(canvas, layout, readout, labelled.contains(readout.id));
+    }
+
+    final locked = visible.where((r) => r.locked).firstOrNull;
+    if (locked != null) {
       _paintSilhouette(canvas, layout, mapper);
-      _paintTarget(canvas, layout, box);
+      _paintTarget(canvas, locked.bodyBox);
     } else {
       _paintIdleReticle(canvas, layout);
     }
 
+    paintRoster(canvas, layout, theme, visible);
+    _paintCards(canvas, layout, visible, labelled);
+
     _paintStateLabel(canvas, layout);
     if (tracker.outOfRange) _paintOutOfRange(canvas, layout);
+  }
+
+  /// Qué objetivos llevan ficha de distancia.
+  ///
+  /// El trabado siempre; el resto de los cupos se reparte por cercanía, que es
+  /// el mismo orden de la columna. El tope lo fija el formato de pantalla
+  /// (AC-6.8): los que quedan afuera conservan ganchos y barra, sin ficha.
+  Set<int?> _labelled(List<TargetReadout> visible, int limit) {
+    final locked = visible.where((r) => r.locked).toList();
+    return {
+      ...locked.map((r) => r.id),
+      ...visible
+          .where((r) => !r.locked)
+          .take(limit - locked.length)
+          .map((r) => r.id),
+    };
+  }
+
+  /// Las fichas se dibujan en una pasada aparte, por encima de todo.
+  ///
+  /// La del trabado se coloca primero: es la que tiene derecho a su lugar, y
+  /// las demás se corren para no pisarla. También se las mantiene fuera de la
+  /// columna de sujetos.
+  void _paintCards(
+    Canvas canvas,
+    HudLayout layout,
+    List<TargetReadout> visible,
+    Set<int?> labelled,
+  ) {
+    final bounds = Rect.fromLTRB(
+      layout.stage.left + rosterWidth(theme) + theme.inset,
+      layout.stage.top,
+      layout.stage.right,
+      layout.stage.bottom,
+    );
+    final lockedColor = _targetColor.withValues(
+      alpha: tracker.state == TrackingState.lost ? 0.5 : 1.0,
+    );
+
+    final occupied = <Rect>[];
+    for (final readout in [
+      ...visible.where((r) => r.locked),
+      ...visible.where((r) => !r.locked),
+    ]) {
+      if (!labelled.contains(readout.id)) continue;
+      // Durante ACQUIRING el objetivo todavía no tiene ficha: el reticle
+      // cerrándose ya dice que el sistema está trabajando.
+      if (readout.locked && !tracker.state.hasTarget) continue;
+
+      occupied.add(paintTargetCard(
+        canvas,
+        theme,
+        readout,
+        bounds: bounds,
+        color: readout.locked ? lockedColor : theme.structureDim,
+        compact: !readout.locked,
+        avoid: occupied,
+      ));
+    }
   }
 
   /// A distancia corta el encuadre del cuerpo desborda la pantalla por abajo.
@@ -126,7 +204,7 @@ class HudPainter extends CustomPainter {
 
   // ── objetivo ──────────────────────────────────────────────────────────────
 
-  void _paintTarget(Canvas canvas, HudLayout layout, Rect box) {
+  void _paintTarget(Canvas canvas, Rect box) {
     // En LOST el reticle queda congelado y atenuado (AC-3.5).
     final opacity = tracker.state == TrackingState.lost ? 0.5 : 1.0;
     final color = _targetColor.withValues(alpha: opacity);
@@ -149,21 +227,6 @@ class HudPainter extends CustomPainter {
 
     if (!reduceMotion && tracker.lockPulse > 0.01) {
       _paintLockPulse(canvas, box, tracker.lockPulse);
-    }
-    if (tracker.state.hasTarget) {
-      paintTargetCard(
-        canvas,
-        theme,
-        TargetReadout(
-          id: tracker.lockedId,
-          bodyBox: box,
-          distanceMeters: tracker.distanceMeters,
-          locked: true,
-          calibrated: tracker.calibrated,
-        ),
-        bounds: layout.stage,
-        color: color,
-      );
     }
   }
 
@@ -215,14 +278,23 @@ class HudPainter extends CustomPainter {
   }
 
   /// Marca secundaria: presente pero claramente subordinada al objetivo
-  /// trabado. Traza más fina, color atenuado y solo el identificador.
-  void _paintSecondary(Canvas canvas, HudLayout layout, Rect box, int id) {
+  /// trabado. Traza más fina y color atenuado.
+  ///
+  /// El identificador se dibuja solo cuando el objetivo **no** lleva ficha: con
+  /// ficha, la designación ya está ahí y repetirla sobre el gancho la duplica.
+  void _paintSecondary(
+    Canvas canvas,
+    HudLayout layout,
+    TargetReadout readout,
+    bool hasCard,
+  ) {
+    final box = readout.bodyBox;
     final color = theme.structureDim.withValues(alpha: 0.55);
     paintBrackets(canvas, box, color, theme.hairline * 1.5);
 
-    if (id < 0) return;
+    if (hasCard || readout.id == null) return;
     final label = _text(
-      targetDesignation(id),
+      readout.designation,
       hudText(color: color, size: theme.microSize),
     );
     final gap = theme.microSize * 0.5;

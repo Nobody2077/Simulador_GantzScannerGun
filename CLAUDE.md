@@ -20,14 +20,26 @@ No hace falta volver a evaluarlas salvo que el usuario lo pida.
   coordenadas en un solo caso.
 - **Teléfono y tablet** son objetivos de primera clase: el HUD es responsivo.
 - **Un solo objetivo trabado**, pero **varios mostrados** con jerarquía. La
-  máquina de estados no cambió al agregar multi-objetivo.
+  máquina de estados no cambió al agregar multi-objetivo. Todos los detectados
+  llevan ganchos y barra en la columna; la ficha de distancia la llevan el
+  trabado y los más cercanos hasta el tope del formato (3 en teléfono, 5 en
+  tablet). La jerarquía la sostienen el peso de trazo, la silueta y el tamaño
+  de la barra, no la ausencia de datos.
+- **Sin línea guía entre ficha y objetivo.** Se probó y se quitó: con una sola
+  ficha ya ensuciaba y con cinco el área útil se llenaba de cables cruzados.
+  La separación respecto del gancho es la que comunica la pertenencia.
 - **La cara es el ancla, el cuerpo es el encuadre.** El reticle encuadra la
   figura completa, derivada del rostro por proporción antropométrica.
 - **Silueta solo al trabar.** La segmentación corre únicamente en `LOCKED`.
 - **Designación técnica** (`TGT-07`), no nombres inventados: no se le pone un
   nombre falso a una persona real.
 - **Cromo estructural sin datos falsos.** Las formas de la franja inferior son
-  decorativas; todos los números que aparecen son mediciones reales.
+  decorativas; todos los números que aparecen son mediciones reales. La única
+  excepción deliberada es la barra de la columna de sujetos, que está siempre
+  llena: por eso va en cian y no en ámbar, que es el color reservado a lo que
+  el sistema mide. Es un dato del objetivo (`TargetReadout.vitality`) y no un
+  adorno del painter, para que pueda pasar a significar algo sin rehacer el
+  dibujo.
 - **Copia visible en español**, identificadores internos en inglés (AC-6.3).
 
 ## Estructura
@@ -49,6 +61,7 @@ lib/
     hud_layout.dart      Geometría compartida entre painters
     chrome_painter.dart  Marco permanente — estático, no se repinta
     hud_painter.dart     Objetivo y valores en vivo — se repinta con el tracker
+    target_layer.dart    Ganchos, ficha y columna de sujetos, sobre datos
     diagnostics_panel.dart  Panel de desarrollo (AC-2.7)
   audio/
     hud_cue.dart         Transición → señal sonora (función pura)
@@ -97,6 +110,17 @@ Cada una costó una sesión de depuración o un bug reportado desde el dispositi
    dentro del encuadre del objetivo trabado; sin ese recorte vendrían los
    acompañantes pegados.
 
+9. **El orden de la columna tiene banda muerta y las marcas, ventana de
+   gracia.** Ordenar por distancia de cero en cada inferencia hacía que dos
+   personas paradas a la misma distancia se intercambiaran de puesto varias
+   veces por segundo; y ML Kit deja caer un rostro por un cuadro suelto cada
+   tanto, lo que hacía titilar barras y ganchos. `TrackingConfig` expone
+   `orderBandMeters` y `markGrace`. Hay tests de regresión para las dos.
+
+10. **Los painters no hablan con el tracker para dibujar un objetivo.** Reciben
+    `TargetReadout` ya resuelto. Es lo que permite componer contra datos
+    sintéticos en `hud_mockup_test.dart`, sin cámara ni máquina de estados.
+
 ## Estado
 
 ### Hecho
@@ -106,7 +130,7 @@ Cada una costó una sesión de depuración o un bug reportado desde el dispositi
 | REQ-1 | Cámara, permisos, ciclo de vida, orientación |
 | REQ-2 | Detección de rostros, mapeo de coordenadas, histéresis del lock |
 | REQ-3 | Máquina de estados completa con sus umbrales |
-| REQ-4 | Distancia por modelo pinhole, sin calibrar (ver pendientes) |
+| REQ-4 | Distancia por modelo pinhole **por objetivo**, sin calibrar (ver pendientes) |
 | REQ-5 | Suavizado, interpolación, banda muerta |
 | REQ-6 | Paleta, cromo, ficha de objetivo, silueta, animaciones, responsivo |
 | REQ-7 | Tonos, háptica, silencio persistente |
@@ -141,6 +165,7 @@ flutter build apk --release --target-platform android-arm64
 flutter build apk --profile --target-platform android-arm64   # para medir
 dart run tool/generate_tones.dart                             # regenera los WAV
 flutter test test/hud_preview_test.dart                        # PNG en build/
+flutter test test/hud_mockup_test.dart                         # ídem, multi-objetivo
 ```
 
 `hud_preview_test.dart` rasteriza el HUD a PNG sin dispositivo. Sirve para
