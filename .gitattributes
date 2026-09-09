@@ -1,0 +1,11 @@
+# Normalizar finales de linea: LF en el repositorio, nativo en disco.
+* text=auto eol=lf
+
+# Binarios: sin conversion.
+*.wav binary
+*.png binary
+*.jpeg binary
+*.jpg binary
+*.jar binary
+*.keystore binary
+*.jks binary
