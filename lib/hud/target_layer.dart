@@ -302,7 +302,26 @@ Rect _placeClear(Rect card, Rect bounds, List<Rect> avoid, double gap) {
 // ── columna de sujetos ──────────────────────────────────────────────────────
 
 /// Ancho que la columna de barras reserva del área útil.
-double rosterWidth(HudTheme theme) => theme.labelSize * 8.4;
+///
+/// Escala con la pantalla y no solo con la tipografía. `hudScale` está acotado
+/// por abajo en 0,85 para que el texto no se vuelva ilegible (AC-6.9), y en una
+/// tablet de unos 600 dp de lado corto se queda justo en ese piso: la columna
+/// terminaba del mismo tamaño que en un teléfono, que es exactamente lo que se
+/// veía chico en dispositivo.
+///
+/// Los dos topes acotan los extremos: por abajo, una columna que no se lee; por
+/// arriba, una que se come el encuadre y tapa a los sujetos de la izquierda.
+double rosterWidth(HudLayout layout, HudTheme theme) =>
+    (layout.stage.width * 0.115)
+        .clamp(theme.labelSize * 8.4, theme.labelSize * 15);
+
+/// Alto de la barra, derivado del ancho de la columna.
+///
+/// Va atado al ancho y no a la tipografía para que la barra crezca con la
+/// pantalla. El texto no: ese sigue acotado por [hudScale], porque una etiqueta
+/// gigante no se lee mejor, solo ocupa más.
+double _rosterBarHeight(double width, bool locked) =>
+    width * (locked ? 0.11 : 0.075);
 
 /// Columna de barras de los sujetos escaneados, a la izquierda del área útil.
 ///
@@ -312,6 +331,11 @@ double rosterWidth(HudTheme theme) => theme.labelSize * 8.4;
 /// El orden lo fija [orderByProximity] — el más cercano arriba —, pero el
 /// tamaño lo fija el lock: la barra grande es la del objetivo trabado, esté en
 /// el puesto que esté. Son dos señales distintas y no compiten.
+///
+/// **Todas las barras van con la misma intensidad de color.** La jerarquía la
+/// marcan el tamaño y el filete ámbar del trabado. Atenuar las demás las hacía
+/// leer como "menos señal" —una barra medio apagada parece una medición baja—
+/// cuando lo único que dicen es que no son el objetivo trabado.
 ///
 /// Las barras van en cian y no en ámbar a propósito. La regla de la paleta dice
 /// que el ámbar es para lo que el sistema **mide**, y esta barra no mide nada:
@@ -325,7 +349,7 @@ void paintRoster(
   if (ordered.isEmpty) return;
 
   final left = layout.stage.left;
-  final width = rosterWidth(theme);
+  final width = rosterWidth(layout, theme);
   var y = layout.stage.top;
 
   final header = _text(
@@ -352,7 +376,7 @@ void paintRoster(
 
   for (var i = 0; i < ordered.length; i++) {
     final readout = ordered[i];
-    final height = _rosterRowHeight(theme, readout.locked);
+    final height = _rosterRowHeight(theme, width, readout.locked);
     final remaining = ordered.length - i;
 
     // No se encogen las filas: la altura de fila ya es el mínimo legible a
@@ -372,10 +396,11 @@ void paintRoster(
   }
 }
 
-double _rosterRowHeight(HudTheme theme, bool locked) {
+double _rosterRowHeight(HudTheme theme, double width, bool locked) {
   final labelSize = locked ? theme.labelSize : theme.microSize * 1.2;
-  final barHeight = locked ? theme.labelSize * 0.72 : theme.labelSize * 0.46;
-  return labelSize * 1.25 + barHeight + theme.microSize * 0.35;
+  return labelSize * 1.25 +
+      _rosterBarHeight(width, locked) +
+      theme.microSize * 0.35;
 }
 
 void _paintRosterRow(
@@ -387,7 +412,9 @@ void _paintRosterRow(
   double width,
 ) {
   final locked = readout.locked;
-  final color = locked ? theme.structure : theme.structureDim;
+  // Misma intensidad para todas: lo que distingue al trabado es el tamaño y el
+  // filete, no un color más apagado.
+  final color = theme.structure;
 
   final label = _text(
     readout.designation,
@@ -400,7 +427,7 @@ void _paintRosterRow(
   label.paint(canvas, Offset(left, top));
 
   final barTop = top + label.height + theme.microSize * 0.35;
-  final barHeight = locked ? theme.labelSize * 0.72 : theme.labelSize * 0.46;
+  final barHeight = _rosterBarHeight(width, locked);
   // La barra del trabado ocupa el ancho completo de la columna; las demás se
   // quedan cortas, para que la jerarquía se lea de un vistazo y no por color.
   final barWidth = locked ? width : width * 0.82;
@@ -420,7 +447,7 @@ void _paintRosterRow(
       track.width * readout.vitality.clamp(0, 1),
       track.height,
     ),
-    Paint()..color = color.withValues(alpha: locked ? 0.95 : 0.6),
+    Paint()..color = color.withValues(alpha: 0.9),
   );
 
   if (locked) {

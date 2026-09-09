@@ -155,7 +155,7 @@ class HudPainter extends CustomPainter {
     Set<int?> labelled,
   ) {
     final bounds = Rect.fromLTRB(
-      layout.stage.left + rosterWidth(theme) + theme.inset,
+      layout.stage.left + rosterWidth(layout, theme) + theme.inset,
       layout.stage.top,
       layout.stage.right,
       layout.stage.bottom,
