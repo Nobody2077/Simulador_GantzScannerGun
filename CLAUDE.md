@@ -25,9 +25,17 @@ No hace falta volver a evaluarlas salvo que el usuario lo pida.
   trabado y los más cercanos hasta el tope del formato (3 en teléfono, 5 en
   tablet). La jerarquía la sostienen el peso de trazo, la silueta y el tamaño
   de la barra, no la ausencia de datos.
-- **Sin línea guía entre ficha y objetivo.** Se probó y se quitó: con una sola
-  ficha ya ensuciaba y con cinco el área útil se llenaba de cables cruzados.
-  La separación respecto del gancho es la que comunica la pertenencia.
+- **Línea guía en codo**, de la esquina del encuadre al canto de su ficha. La
+  diagonal suelta se probó y se descartó: con cinco fichas las diagonales se
+  cruzan y dejan de decir quién es quién. El codo no.
+- **Un solo objetivo trabado, pero con dos vías para cambiarlo.** El toque
+  manda y se sostiene hasta perder a ese objetivo; sin toque, el lock pasa a
+  otro rostro que quede más centrado por encima de un margen y durante varias
+  inferencias. AC-2.6 sigue valiendo para el cuadro suelto.
+- **Tinte azul sobre el feed**, por debajo del HUD. El feed crudo se lee como
+  una foto; el tinte lo integra al instrumento. Suave a propósito.
+- **Los nodos del rostro y la flecha van solo sobre el trabado.** Son el gesto
+  de adquisición: aparecen con el cierre del reticle, no están siempre.
 - **La cara es el ancla, el cuerpo es el encuadre.** El reticle encuadra la
   figura completa, derivada del rostro por proporción antropométrica.
 - **Silueta solo al trabar.** La segmentación corre únicamente en `LOCKED`.
@@ -121,6 +129,19 @@ Cada una costó una sesión de depuración o un bug reportado desde el dispositi
     `TargetReadout` ya resuelto. Es lo que permite componer contra datos
     sintéticos en `hud_mockup_test.dart`, sin cámara ni máquina de estados.
 
+11. **La pérdida del objetivo la define su `trackingId`, no que el encuadre
+    quede vacío.** `_select` devuelve `null` cuando el id trabado no está,
+    aunque queden otros rostros. Devolver otro dejaba al tracker en `LOCKED`
+    apuntando a un id ausente —`_advanceState` no hace nada en `LOCKED`—, sin
+    pasar nunca a `LOST` ni volver a `SEARCHING`: el reticle se congelaba y el
+    sistema no trababa nada más. Hay test de regresión con **otro sujeto
+    todavía en cuadro**, que es el caso que el test original no cubría.
+
+12. **La silueta se dibuja como polilíneas, no como segmentos sueltos.**
+    Marching squares emite un segmento por celda; encadenarlos y suavizarlos es
+    lo que separa una línea continua de un rosario de rayas sobre la persona.
+    Se encadena en coordenadas de máscara, donde los extremos son exactos.
+
 ## Estado
 
 ### Hecho
@@ -141,6 +162,8 @@ Cada una costó una sesión de depuración o un bug reportado desde el dispositi
   técnico que queda: el plugin `camera` no compone el overlay, así que hace
   falta grabación de pantalla vía `MediaProjection` o render a textura común.
   AC-8.6 ya define el repliegue a captura fija si no da el rendimiento.
+  **La captura tiene que aplicar `HudTheme.feedTint`**, o la foto va a salir
+  distinta de lo que se ve en pantalla.
 - **REQ-4 — calibración del hFOV.** Se usa 67° por defecto y la distancia se
   muestra con `~` adelante. Leer `LENS_INFO_AVAILABLE_FOCAL_LENGTHS` y
   `SENSOR_INFO_PHYSICAL_SIZE` por platform channel quita esa marca.
@@ -150,11 +173,15 @@ Cada una costó una sesión de depuración o un bug reportado desde el dispositi
 ### Calidad conocida
 
 - La silueta no es completa: el modelo está entrenado para selfies y se degrada
-  con la distancia. El usuario la aceptó como está ("no es perfecto pero salva").
-  Si hay que mejorarla, las palancas son el umbral de confianza y el paso de
-  celda de `SilhouetteExtractor`.
+  con la distancia. Encadenarla y suavizarla limpió la línea, pero no inventa
+  lo que la máscara no ve: de cerca se parece a la referencia, a cinco metros
+  sigue siendo parcial. Las palancas que quedan son `threshold`, `step`,
+  `smoothingPasses` y `minContourPoints` de `SilhouetteExtractor`.
 - El contorno se actualiza a la tasa de inferencia, no a 60 fps. Se lee como
   barrido en vivo.
+- Sin medir en dispositivo: el costo del encadenado y el suavizado por
+  inferencia, y si 400 ms de gracia y los umbrales de re-trabado se sienten
+  bien con gente moviéndose.
 
 ## Comandos
 
