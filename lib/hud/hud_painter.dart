@@ -8,6 +8,7 @@ import '../tracking/target_tracker.dart';
 import '../tracking/tracking_state.dart';
 import 'hud_layout.dart';
 import 'hud_theme.dart';
+import 'target_layer.dart';
 
 /// Lecturas en vivo de la franja inferior. Todas salen de mediciones reales.
 @immutable
@@ -139,7 +140,7 @@ class HudPainter extends CustomPainter {
     // Con contorno disponible, los ganchos pasan a segundo plano: encuadran,
     // pero el que describe al objetivo es el contorno.
     final hasSilhouette = tracker.silhouette?.isEmpty == false;
-    _paintBrackets(
+    paintBrackets(
       canvas,
       box.inflate(spread),
       color,
@@ -149,7 +150,21 @@ class HudPainter extends CustomPainter {
     if (!reduceMotion && tracker.lockPulse > 0.01) {
       _paintLockPulse(canvas, box, tracker.lockPulse);
     }
-    if (tracker.state.hasTarget) _paintTargetCard(canvas, layout, box, color);
+    if (tracker.state.hasTarget) {
+      paintTargetCard(
+        canvas,
+        theme,
+        TargetReadout(
+          id: tracker.lockedId,
+          bodyBox: box,
+          distanceMeters: tracker.distanceMeters,
+          locked: true,
+          calibrated: tracker.calibrated,
+        ),
+        bounds: layout.stage,
+        color: color,
+      );
+    }
   }
 
   /// Contorno del objetivo, trazado sobre su forma real.
@@ -191,7 +206,7 @@ class HudPainter extends CustomPainter {
   /// Destello de confirmación: un segundo marco ámbar que se contrae sobre el
   /// objetivo y se apaga.
   void _paintLockPulse(Canvas canvas, Rect box, double pulse) {
-    _paintBrackets(
+    paintBrackets(
       canvas,
       box.inflate(box.shortestSide * 0.14 * pulse),
       theme.readout.withValues(alpha: pulse * 0.85),
@@ -203,11 +218,11 @@ class HudPainter extends CustomPainter {
   /// trabado. Traza más fina, color atenuado y solo el identificador.
   void _paintSecondary(Canvas canvas, HudLayout layout, Rect box, int id) {
     final color = theme.structureDim.withValues(alpha: 0.55);
-    _paintBrackets(canvas, box, color, theme.hairline * 1.5);
+    paintBrackets(canvas, box, color, theme.hairline * 1.5);
 
     if (id < 0) return;
     final label = _text(
-      'TGT-${_pad(id)}',
+      targetDesignation(id),
       hudText(color: color, size: theme.microSize),
     );
     final gap = theme.microSize * 0.5;
@@ -218,128 +233,6 @@ class HudPainter extends CustomPainter {
         (box.top - label.height - gap).clamp(layout.stage.top, box.top),
       ),
     );
-  }
-
-  /// Ganchos angulares en las esquinas: encuadran sin tapar al objetivo, que es
-  /// de lo que se trata al apuntar.
-  void _paintBrackets(
-      Canvas canvas, Rect box, Color color, double strokeWidth) {
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.square
-      ..color = color;
-
-    // Proporcional al lado corto, para que un objetivo lejano no termine con
-    // brazos que se tocan entre sí.
-    final arm = (box.shortestSide * 0.18).clamp(12.0, 72.0);
-    final lip = arm * 0.28;
-
-    for (final corner in const [
-      (Alignment.topLeft, 1.0, 1.0),
-      (Alignment.topRight, -1.0, 1.0),
-      (Alignment.bottomLeft, 1.0, -1.0),
-      (Alignment.bottomRight, -1.0, -1.0),
-    ]) {
-      final origin = corner.$1.inscribe(Size.zero, box).topLeft;
-      final dx = corner.$2;
-      final dy = corner.$3;
-
-      // Brazo horizontal con un pequeño labio perpendicular en la punta: es lo
-      // que separa un gancho de instrumento de una simple L.
-      final path = Path()
-        ..moveTo(origin.dx + dx * arm, origin.dy + dy * lip)
-        ..lineTo(origin.dx + dx * arm, origin.dy)
-        ..lineTo(origin.dx, origin.dy)
-        ..lineTo(origin.dx, origin.dy + dy * arm)
-        ..lineTo(origin.dx + dx * lip, origin.dy + dy * arm);
-      canvas.drawPath(path, paint);
-    }
-  }
-
-  /// Ficha del objetivo, unida por una línea guía diagonal en vez de pegada al
-  /// blanco: deja ver al objetivo y ordena la lectura.
-  void _paintTargetCard(
-      Canvas canvas, HudLayout layout, Rect box, Color color) {
-    final designation =
-        tracker.lockedId == null ? 'TGT-··' : 'TGT-${_pad(tracker.lockedId!)}';
-    final distance = tracker.distanceMeters;
-
-    final title = _text('OBJETIVO',
-        hudText(
-          color: theme.structureDim,
-          size: theme.microSize,
-          letterSpacing: theme.microSize * 0.22,
-        ));
-    final id = _text(designation,
-        hudText(color: color, size: theme.labelSize * 1.15));
-    final distanceLabel = _text('DISTANCIA',
-        hudText(
-          color: theme.structureDim,
-          size: theme.microSize,
-          letterSpacing: theme.microSize * 0.22,
-        ));
-    // AC-4.5 y AC-4.7: una decimal, con "~" mientras el hFOV no esté calibrado.
-    final distanceValue = _text(
-      distance == null
-          ? '—'
-          : '${tracker.calibrated ? "" : "~"}${distance.toStringAsFixed(1)} m',
-      hudText(color: theme.readout, size: theme.valueSize),
-    );
-
-    final pad = theme.inset * 0.55;
-    final width = [title, id, distanceLabel, distanceValue]
-            .map((t) => t.width)
-            .reduce((a, b) => a > b ? a : b) +
-        pad * 2;
-    final height = title.height +
-        id.height +
-        distanceLabel.height +
-        distanceValue.height +
-        pad * 2.6;
-
-    // Arriba y a la derecha del objetivo, traída dentro del área útil.
-    final anchor = Offset(
-      box.right + theme.inset * 2.2,
-      box.top - height - theme.inset,
-    );
-    final origin = Offset(
-      anchor.dx.clamp(layout.stage.left, layout.stage.right - width),
-      anchor.dy.clamp(layout.stage.top, layout.stage.bottom - height),
-    );
-    final card = Rect.fromLTWH(origin.dx, origin.dy, width, height);
-
-    // Línea guía desde la esquina del objetivo hasta la ficha.
-    canvas.drawLine(
-      box.topRight,
-      Offset(card.left, card.bottom),
-      Paint()
-        ..strokeWidth = theme.hairline
-        ..color = color.withValues(alpha: 0.7),
-    );
-
-    canvas.drawRect(card, Paint()..color = theme.panelFill);
-    canvas.drawRect(
-      card,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = theme.hairline
-        ..color = theme.structureDim,
-    );
-    // Filete de acento en el canto izquierdo.
-    canvas.drawRect(
-      Rect.fromLTWH(card.left, card.top, theme.hairline * 2.5, card.height),
-      Paint()..color = color,
-    );
-
-    var y = card.top + pad;
-    title.paint(canvas, Offset(card.left + pad, y));
-    y += title.height + pad * 0.2;
-    id.paint(canvas, Offset(card.left + pad, y));
-    y += id.height + pad * 0.6;
-    distanceLabel.paint(canvas, Offset(card.left + pad, y));
-    y += distanceLabel.height + pad * 0.1;
-    distanceValue.paint(canvas, Offset(card.left + pad, y));
   }
 
   /// Reticle de reposo: una forma abierta en el centro mientras no hay nada
@@ -446,7 +339,7 @@ class HudPainter extends CustomPainter {
     final right = [
       '${readouts.value.inferenceFps.toStringAsFixed(1)} FPS',
       '${readouts.value.latencyMs} MS',
-      tracker.lockedId == null ? '—' : 'TGT-${_pad(tracker.lockedId!)}',
+      tracker.lockedId == null ? '—' : targetDesignation(tracker.lockedId),
     ];
 
     for (var i = 0; i < 3; i++) {
@@ -473,8 +366,6 @@ class HudPainter extends CustomPainter {
   }
 
   // ── utilidades ────────────────────────────────────────────────────────────
-
-  String _pad(int id) => (id % 100).toString().padLeft(2, '0');
 
   TextPainter _text(String value, TextStyle style) => TextPainter(
         text: TextSpan(text: value, style: style),
