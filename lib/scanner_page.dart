@@ -387,7 +387,7 @@ class _ScannerPageState extends State<ScannerPage>
       DiagnosticRow(
         'contorno',
         _tracker.silhouette?.isEmpty == false
-            ? '${_tracker.silhouette!.segments.length ~/ 4} seg · $_segmentationMs ms'
+            ? '${_tracker.silhouette!.contours.length} cont · ${_tracker.silhouette!.pointCount} pt · $_segmentationMs ms'
             : '—',
       ),
       DiagnosticRow(

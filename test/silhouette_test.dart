@@ -50,14 +50,36 @@ void main() {
       );
 
       expect(result.isEmpty, isFalse);
-      // Cada segmento son cuatro valores: x0, y0, x1, y1.
-      expect(result.segments.length % 4, 0);
+      // Cada contorno es una polilínea: pares x, y en orden de recorrido.
+      for (final contour in result.contours) {
+        expect(contour.length % 2, 0);
+        expect(contour.length ~/ 2, greaterThanOrEqualTo(2),
+            reason: 'una polilínea de un solo punto no es una línea');
+      }
 
       // Todo el contorno cae alrededor del bloque, no en el vacío.
-      for (var i = 0; i < result.segments.length; i += 2) {
-        expect(result.segments[i], inInclusiveRange(18, 46));
-        expect(result.segments[i + 1], inInclusiveRange(18, 46));
+      for (final contour in result.contours) {
+        for (var i = 0; i < contour.length; i += 2) {
+          expect(contour[i], inInclusiveRange(18, 46));
+          expect(contour[i + 1], inInclusiveRange(18, 46));
+        }
       }
+    });
+
+    test('los segmentos se encadenan en una polilínea, no quedan sueltos', () {
+      final result = extractor.extract(
+        confidences: mask(
+            64, 64, (x, y) => x >= 20 && x < 44 && y >= 20 && y < 44),
+        maskWidth: 64,
+        maskHeight: 64,
+        imageSize: size,
+        region: wholeFrame,
+      );
+
+      // Un bloque tiene un solo borde: tiene que salir un contorno, no
+      // decenas de rayas sueltas. Es lo que permite dibujarlo de un trazo.
+      expect(result.contours, hasLength(1));
+      expect(result.pointCount, greaterThan(20));
     });
 
     test('la región recorta: un objetivo fuera de ella no aporta contorno', () {
@@ -96,7 +118,8 @@ void main() {
 
       expect(result.isEmpty, isFalse);
       final maxX = [
-        for (var i = 0; i < result.segments.length; i += 2) result.segments[i]
+        for (final contour in result.contours)
+          for (var i = 0; i < contour.length; i += 2) contour[i],
       ].reduce((a, b) => a > b ? a : b);
 
       // El bloque llega hasta x=24 en máscara, que son 48 en imagen.

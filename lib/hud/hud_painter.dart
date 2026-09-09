@@ -1,5 +1,3 @@
-import 'dart:ui' show PointMode;
-
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/widgets.dart';
 
@@ -268,27 +266,46 @@ class HudPainter extends CustomPainter {
     final silhouette = tracker.silhouette;
     if (silhouette == null || silhouette.isEmpty) return;
 
-    final points = mapper.mapPoints(silhouette.segments);
+    // Cada contorno es una polilínea, no segmentos sueltos: se dibuja de un
+    // trazo, con juntas redondeadas. Es lo que separa una línea continua de un
+    // rosario de rayas sobre la persona.
+    final paths = <Path>[];
+    for (final contour in silhouette.contours) {
+      final points = mapper.mapPoints(contour);
+      if (points.length < 4) continue;
+
+      final path = Path()..moveTo(points[0], points[1]);
+      for (var i = 2; i < points.length; i += 2) {
+        path.lineTo(points[i], points[i + 1]);
+      }
+      paths.add(path);
+    }
+    if (paths.isEmpty) return;
 
     canvas.save();
     canvas.clipRect(layout.stage);
 
-    canvas.drawRawPoints(
-      PointMode.lines,
-      points,
-      Paint()
-        ..strokeWidth = theme.strokeWidth * 3.2
-        ..strokeCap = StrokeCap.round
-        ..color = theme.structure.withValues(alpha: 0.18),
-    );
-    canvas.drawRawPoints(
-      PointMode.lines,
-      points,
-      Paint()
-        ..strokeWidth = theme.strokeWidth * 0.9
-        ..strokeCap = StrokeCap.round
-        ..color = theme.highlight.withValues(alpha: 0.9),
-    );
+    final halo = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = theme.strokeWidth * 3.2
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = theme.structure.withValues(alpha: 0.18);
+    final line = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = theme.strokeWidth * 0.9
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = theme.highlight.withValues(alpha: 0.9);
+
+    // Todo el halo primero: si se dibujara halo y línea contorno por contorno,
+    // el halo de uno taparía la línea nítida del anterior.
+    for (final path in paths) {
+      canvas.drawPath(path, halo);
+    }
+    for (final path in paths) {
+      canvas.drawPath(path, line);
+    }
 
     canvas.restore();
   }
