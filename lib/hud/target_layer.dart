@@ -312,6 +312,8 @@ Rect paintTargetCard(
     theme.inset * 0.4,
   );
 
+  _paintLeader(canvas, theme, readout.bodyBox, card, color);
+
   canvas.drawRect(card, Paint()..color = theme.panelFill);
   canvas.drawRect(
     card,
@@ -345,6 +347,45 @@ Rect paintTargetCard(
   }
 
   return card;
+}
+
+/// Línea en codo entre la esquina del encuadre y el canto de su ficha.
+///
+/// Sale de la esquina superior del objetivo —la del lado donde quedó la ficha—,
+/// corre en horizontal y sube en ángulo recto hasta la ficha. El codo es lo que
+/// la hace legible con varios sujetos: las diagonales largas se cruzan entre sí
+/// y dejan de decir quién es quién, que fue exactamente el problema de la
+/// versión anterior.
+///
+/// Se dibuja antes que la ficha para que el trazo se meta por debajo del panel
+/// en vez de cortarse contra su borde.
+void _paintLeader(
+  Canvas canvas,
+  HudTheme theme,
+  Rect box,
+  Rect card,
+  Color color,
+) {
+  final toTheRight = card.center.dx >= box.center.dx;
+  final start = toTheRight ? box.topRight : box.topLeft;
+
+  // Llega al canto de la ficha cerca de su borde más próximo al objetivo, no
+  // al centro: un codo que apunta a la esquina se lee como pertenencia.
+  final endX = toTheRight
+      ? card.left + card.width * 0.18
+      : card.right - card.width * 0.18;
+  final endY = card.bottom <= box.top ? card.bottom : card.top;
+
+  canvas.drawPath(
+    Path()
+      ..moveTo(start.dx, start.dy)
+      ..lineTo(endX, start.dy)
+      ..lineTo(endX, endY),
+    Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = theme.hairline
+      ..color = color.withValues(alpha: 0.55),
+  );
 }
 
 /// Corre la ficha hasta encontrarle un hueco libre.
