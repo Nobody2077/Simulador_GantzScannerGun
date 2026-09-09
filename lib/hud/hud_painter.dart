@@ -96,6 +96,7 @@ class HudPainter extends CustomPainter {
       visible.add(TargetReadout(
         id: mark.id < 0 ? null : mark.id,
         bodyBox: box,
+        faceBox: _visible(mapper.mapRect(mark.faceBox), layout),
         distanceMeters: mark.distanceMeters,
         locked: mark.locked,
         calibrated: tracker.calibrated,
@@ -116,6 +117,7 @@ class HudPainter extends CustomPainter {
     if (locked != null) {
       _paintSilhouette(canvas, layout, mapper);
       _paintTarget(canvas, locked.bodyBox);
+      _paintTargetNodes(canvas, layout, locked);
     } else {
       _paintIdleReticle(canvas, layout);
     }
@@ -125,6 +127,31 @@ class HudPainter extends CustomPainter {
 
     _paintStateLabel(canvas, layout);
     if (tracker.outOfRange) _paintOutOfRange(canvas, layout);
+  }
+
+  /// Nodos del rostro y flecha de designación, los dos sobre el trabado.
+  ///
+  /// Aparecen con el mismo avance con que se cierra el reticle: son parte del
+  /// gesto de adquisición y no adorno permanente. En LOST se atenúan junto con
+  /// el resto del objetivo congelado (AC-3.5).
+  void _paintTargetNodes(
+    Canvas canvas,
+    HudLayout layout,
+    TargetReadout locked,
+  ) {
+    final opacity = (reduceMotion ? 1.0 : tracker.acquireProgress) *
+        (tracker.state == TrackingState.lost ? 0.5 : 1.0);
+    if (opacity <= 0.02) return;
+
+    final face = locked.faceBox;
+    if (face != null) paintFaceNodes(canvas, theme, face, opacity: opacity);
+    paintTargetArrow(
+      canvas,
+      theme,
+      layout.stage,
+      locked.bodyBox,
+      opacity: opacity,
+    );
   }
 
   /// Qué objetivos llevan ficha de distancia.

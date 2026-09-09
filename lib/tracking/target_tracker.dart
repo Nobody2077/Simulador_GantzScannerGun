@@ -24,6 +24,7 @@ class TargetMark {
   const TargetMark({
     required this.id,
     required this.bodyBox,
+    required this.faceBox,
     this.distanceMeters,
     this.locked = false,
     this.vitality = 1,
@@ -32,6 +33,13 @@ class TargetMark {
   /// Negativo cuando ML Kit no asignó un trackingId.
   final int id;
   final Rect bodyBox;
+
+  /// La caja del rostro, que es de donde se deriva todo lo demás.
+  ///
+  /// Va aparte del encuadre del cuerpo porque hay marcas que se apoyan en la
+  /// cara y no en la figura: los nodos de la referencia van alrededor del
+  /// rostro, no del cuerpo.
+  final Rect faceBox;
 
   /// Distancia estimada y suavizada, o `null` mientras la caja sea demasiado
   /// chica para que la cuenta signifique algo.
@@ -247,6 +255,7 @@ class TargetTracker extends ChangeNotifier {
             TargetMark(
               id: id,
               bodyBox: BodyGeometry.fromFace(face),
+              faceBox: face,
               distanceMeters: _smoothedDistance[id],
               locked: id == _lockedKey,
             ),

@@ -20,6 +20,7 @@ class TargetReadout {
   const TargetReadout({
     required this.id,
     required this.bodyBox,
+    this.faceBox,
     this.distanceMeters,
     this.locked = false,
     this.calibrated = false,
@@ -31,6 +32,12 @@ class TargetReadout {
 
   /// Encuadre del cuerpo en coordenadas de pantalla, ya recortado al área útil.
   final Rect bodyBox;
+
+  /// La caja del rostro, también en coordenadas de pantalla.
+  ///
+  /// `null` cuando el rostro quedó fuera del área útil aunque el cuerpo siga
+  /// visible: pasa a distancia corta, con la cara arriba del borde.
+  final Rect? faceBox;
 
   /// Distancia estimada, o `null` si la caja es demasiado chica para que la
   /// cuenta signifique algo.
@@ -59,6 +66,7 @@ class TargetReadout {
   TargetReadout withBodyBox(Rect box) => TargetReadout(
         id: id,
         bodyBox: box,
+        faceBox: faceBox,
         distanceMeters: distanceMeters,
         locked: locked,
         calibrated: calibrated,
@@ -141,6 +149,80 @@ void paintBrackets(Canvas canvas, Rect box, Color color, double strokeWidth) {
       ..lineTo(origin.dx + dx * lip, origin.dy + dy * arm);
     canvas.drawPath(path, paint);
   }
+}
+
+// ── marcas sobre el objetivo ────────────────────────────────────────────────
+
+/// Ocho nodos blancos alrededor del rostro: las cuatro esquinas y los cuatro
+/// puntos medios de un rectángulo.
+///
+/// Van sobre la **cara** y no sobre el encuadre del cuerpo. Es lo que en la
+/// referencia comunica que el sistema no solo ubicó una figura, sino que la
+/// está midiendo: el rostro es el ancla de todo el pipeline —el `trackingId`,
+/// la escala de la distancia, la proporción del cuerpo— y estos puntos son lo
+/// único del HUD que lo hace visible.
+///
+/// El radio cuelga del tamaño del rostro para que un objetivo lejano no termine
+/// con ocho manchas encima de la cara.
+void paintFaceNodes(
+  Canvas canvas,
+  HudTheme theme,
+  Rect face, {
+  double opacity = 1,
+}) {
+  if (face.isEmpty) return;
+
+  final ring = face.inflate(face.shortestSide * 0.12);
+  final radius = (face.shortestSide * 0.04).clamp(1.4, 5.0);
+  final paint = Paint()
+    ..color = theme.highlight.withValues(alpha: 0.85 * opacity);
+
+  for (final node in [
+    ring.topLeft,
+    Offset(ring.center.dx, ring.top),
+    ring.topRight,
+    Offset(ring.right, ring.center.dy),
+    ring.bottomRight,
+    Offset(ring.center.dx, ring.bottom),
+    ring.bottomLeft,
+    Offset(ring.left, ring.center.dy),
+  ]) {
+    canvas.drawCircle(node, radius, paint);
+  }
+}
+
+/// Flecha de designación: un triángulo ámbar apuntando al objetivo desde
+/// arriba.
+///
+/// Va en ámbar porque señala al objetivo trabado, que es la conclusión del
+/// sistema. Hay una sola en pantalla, como en la referencia: es lo que dice
+/// "este es el que tengo", y dos flechas no dirían nada.
+///
+/// Se mantiene dentro de [bounds]: a distancia corta el encuadre desborda por
+/// arriba y la flecha se saldría del área útil.
+void paintTargetArrow(
+  Canvas canvas,
+  HudTheme theme,
+  Rect bounds,
+  Rect box, {
+  double opacity = 1,
+}) {
+  final width = theme.labelSize * 1.2;
+  final height = width * 0.78;
+  final tipY = (box.top - theme.inset * 0.9)
+      .clamp(bounds.top + height, bounds.bottom);
+  final centerX = box.center.dx.clamp(bounds.left, bounds.right);
+
+  final path = Path()
+    ..moveTo(centerX, tipY)
+    ..lineTo(centerX - width / 2, tipY - height)
+    ..lineTo(centerX + width / 2, tipY - height)
+    ..close();
+
+  canvas.drawPath(
+    path,
+    Paint()..color = theme.readout.withValues(alpha: opacity),
+  );
 }
 
 // ── ficha ───────────────────────────────────────────────────────────────────

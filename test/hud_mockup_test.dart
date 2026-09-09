@@ -35,6 +35,7 @@ void main() {
       TargetReadout(
         id: id,
         bodyBox: BodyGeometry.fromFace(face),
+        faceBox: face,
         distanceMeters: estimator.estimate(
           faceWidthPx: face.width,
           imageWidthPx: canvas.width,
@@ -98,6 +99,13 @@ void main() {
             : theme.structureDim.withValues(alpha: 0.55),
         readout.locked ? theme.strokeWidth : theme.hairline * 1.5,
       );
+
+      // Nodos del rostro y flecha de designación: solo sobre el trabado.
+      if (readout.locked) {
+        final face = readout.faceBox;
+        if (face != null) paintFaceNodes(target, theme, face);
+        paintTargetArrow(target, theme, layout.stage, box);
+      }
     }
 
     // Las fichas después, la del trabado primero: es la que tiene derecho a su
