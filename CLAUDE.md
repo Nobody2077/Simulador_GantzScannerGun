@@ -9,6 +9,15 @@ adquisición y pérdida de señal, sobre el feed de cámara en vivo.
 Los comentarios del código citan sus criterios de aceptación por identificador
 (`AC-2.6`, `AC-4.4`, …). Al tocar código que cite uno, conviene leerlo primero.
 
+**Repositorio público:** https://github.com/Nobody2077/Simulador_GantzScannerGun
+
+Que sea público cambia una cosa de forma permanente: **nada de secretos, ni por
+un commit**. Borrarlos después no alcanza, quedan en la historia. El
+`.gitignore` cubre `.env`, keystores, `key.properties`, `local.properties` y
+credenciales de servicio. `referencias/` no se versiona salvo su `LEEME.md`.
+El enlace al documento de requisitos vive acá y **no** en el README, porque el
+artefacto es privado y sería un enlace muerto para cualquiera.
+
 ## Decisiones ya tomadas
 
 No hace falta volver a evaluarlas salvo que el usuario lo pida.
@@ -36,6 +45,10 @@ No hace falta volver a evaluarlas salvo que el usuario lo pida.
   una foto; el tinte lo integra al instrumento. Suave a propósito.
 - **Los nodos del rostro y la flecha van solo sobre el trabado.** Son el gesto
   de adquisición: aparecen con el cierre del reticle, no están siempre.
+- **El contorno tiene interruptor**, con la forma de los `ON`/`OFF` de la
+  referencia, en la franja inferior. Se persiste igual que el silencio.
+  Apagarlo **no** detiene la segmentación: es una decisión de composición, y
+  volver a encenderlo tiene que mostrar el cuadro actual.
 - **La cara es el ancla, el cuerpo es el encuadre.** El reticle encuadra la
   figura completa, derivada del rostro por proporción antropométrica.
 - **Silueta solo al trabar.** La segmentación corre únicamente en `LOCKED`.
@@ -158,6 +171,23 @@ Cada una costó una sesión de depuración o un bug reportado desde el dispositi
 
 ### Pendiente
 
+- **Resultados de la prueba en tablet.** El APK con multi-objetivo, re-trabado,
+  contorno encadenado, interruptor y tinte quedó instalado pero **todavía no se
+  probó en cámara**. Es lo primero a retomar. Lo que se espera confirmar: que el
+  trabado ya no se congela cuando el objetivo se va con gente todavía en cuadro,
+  que el contorno se lee como línea continua, y cuánto cuesta el encadenado
+  —la fila `contorno` del diagnóstico informa contornos, puntos y milisegundos—.
+
+  Las perillas que salen de esa prueba, todas de una línea:
+
+  | Síntoma | Perilla |
+  |---|---|
+  | La columna se reordena a los saltos | `orderBandMeters` (0,35) |
+  | Las barras titilan con alguien de perfil | `markGrace` (400 ms) |
+  | Cuesta o sobra facilidad para cambiar de objetivo | `retargetMargin` (0,12), `inferencesToRetarget` (5) |
+  | El tinte queda corto o molesta | alfa de `HudTheme.feedTint` |
+  | El contorno cuesta demasiados ms | `smoothingPasses` (2), `step` (2) |
+
 - **REQ-8 — Captura y compartir.** No empezado. Es el ítem de mayor riesgo
   técnico que queda: el plugin `camera` no compone el overlay, así que hace
   falta grabación de pantalla vía `MediaProjection` o render a textura común.
@@ -193,6 +223,7 @@ flutter build apk --profile --target-platform android-arm64   # para medir
 dart run tool/generate_tones.dart                             # regenera los WAV
 flutter test test/hud_preview_test.dart                        # PNG en build/
 flutter test test/hud_mockup_test.dart                         # ídem, multi-objetivo
+git push                                                       # repo público
 ```
 
 `hud_preview_test.dart` rasteriza el HUD a PNG sin dispositivo. Sirve para
